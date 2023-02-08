@@ -1,8 +1,14 @@
 <script lang="ts" setup>
-import { ref, onMounted, reactive, computed, h } from 'vue'
+import { ref, onMounted, reactive, computed, h, nextTick } from 'vue'
 import type { Component } from 'vue'
 import { NIcon } from 'naive-ui'
-import type { InputInst } from 'naive-ui'
+import type {
+  InputInst,
+  DropdownOption,
+  DropdownDividerOption,
+  DropdownRenderOption,
+  DropdownGroupOption,
+} from 'naive-ui'
 import { appConfig } from '@/stores/appConfig'
 import { storeToRefs } from 'pinia'
 import {
@@ -19,8 +25,16 @@ import {
   AddOutline as AddIcon,
   PencilOutline as PencilIcon,
   ListOutline as ListIcon,
+  TrashBinOutline as TrashBinIcon,
+  CreateOutline as CreateIcon,
+  CheckmarkCircleOutline as CheckmarkCircleIcon,
+  CloseOutline as CloseIcon,
 } from '@vicons/ionicons5'
+import contextMenu from '@/components/contextMenu.vue'
+// 引入工具函数
 import { random } from '@/tools/math'
+import { safeHtml, dateDescription } from '@/tools/string'
+// 哈希散列列表的key
 import sha1 from 'sha1'
 // 渲染图标
 const renderIcon = (icon: Component) => {
@@ -28,6 +42,21 @@ const renderIcon = (icon: Component) => {
 }
 
 const config = appConfig()
+const box = reactive(
+  {
+    width: window.innerWidth,
+    height: window.innerHeight,
+  }
+)
+// 挂载后回调
+onMounted(() => {
+  box.width = window.innerWidth
+  box.height = window.innerHeight
+  window.addEventListener('resize', () => {
+    box.width = window.innerWidth
+    box.height = window.innerHeight
+  })
+})
 
 // sider的相关逻辑
 const sider = reactive({
@@ -74,7 +103,7 @@ const siderMenu = reactive({
       type: 'divider',
       key: 'divider-1',
     }
-  ],
+  ] as Array<{ label: string, key: string, icon: any, children?: any }>,
   update: (key: string) => {
     siderMenu.value = key
     const select = siderMenu.menu.find(item => item.key === key) as { label: string, key: string }
@@ -84,13 +113,23 @@ const siderMenu = reactive({
   add: () => {
     const menu = {
       label: '新建列表',
-      key: sha1(Date.now() + '-' + random(1000, 9999).toString()),
+      key: 'list - ' + sha1(Date.now() + '-' + random(1000, 9999).toString()),
       icon: renderIcon(ListIcon),
     }
     siderMenu.menu.push(menu)
     siderMenu.update(menu.key)
     titleEdit()
-  }
+  },
+  rename: () => {
+    titleEdit()
+  },
+  delete: () => {
+    const index = siderMenu.menu.findIndex(item => item.key === siderSelected.key)
+    if (index > -1) {
+      siderMenu.menu.splice(index, 1)
+      siderMenu.update('day')
+    }
+  },
 })
 
 // popover的相关逻辑
@@ -153,6 +192,14 @@ const titleInput = ref(false)
 const titleInputRef = ref<InputInst | null>(null)
 const titleInputValue = ref('')
 const titleEdited = () => {
+  // 如果修改成了空的，就不修改
+  if (titleInputValue.value.trim() === '') {
+    titleInputValue.value = siderSelected.label
+    nextTick(() => {
+      titleInputRef.value?.blur()
+    })
+    return
+  }
   titleInput.value = false
   const menu = siderMenu.menu.find(item => item.key === siderSelected.key)
   if (menu) {
@@ -161,15 +208,215 @@ const titleEdited = () => {
   }
 }
 const titleEdit = () => {
-  const diabled = ['day', 'important', 'plan', 'task']
-  if (diabled.includes(siderSelected.key)) {
+  const disabled = ['day', 'important', 'plan', 'task']
+  if (disabled.includes(siderSelected.key)) {
     return
   }
   titleInput.value = true
   titleInputValue.value = siderSelected.label
-  setTimeout(() => {
+  nextTick(() => {
     titleInputRef.value?.focus()
-  }, 0)
+  })
+}
+
+// 右键菜单的逻辑
+const contextRef = reactive(
+  {
+    location: {
+      x: 0,
+      y: 0,
+    },
+    show: false,
+    options: [] as Array<DropdownOption | DropdownGroupOption | DropdownDividerOption | DropdownRenderOption>
+  }
+)
+const contextMenuHandler = {
+  handleContextMenu: (e: MouseEvent) => {
+    e.preventDefault()
+    contextRef.show = false
+    const disabled = ['day', 'important', 'plan', 'task']
+    // 如果选中的key不是diasbled的，就重新设置menuOptions
+    if (!disabled.includes(siderSelected.key) && siderSelected.key.startsWith('list - ')) {
+      contextRef.options = [
+        {
+          label: '管点老家伙',
+          key: 'manage',
+          disabled: true,
+        },
+        {
+          label: '重命名',
+          key: 'rename-list',
+          icon: renderIcon(CreateIcon),
+        },
+        {
+          label: '删除列表',
+          key: 'delete-list',
+          icon: renderIcon(TrashBinIcon),
+        },
+      ]
+    } else {
+      contextRef.options = [
+        {
+          label: '添加新东西',
+          key: 'add',
+          disabled: true,
+        },
+        {
+          label: '新建列表',
+          key: 'add-list',
+          icon: renderIcon(ListIcon),
+        },
+      ]
+    }
+    nextTick().then(() => {
+      contextRef.location.x = e.clientX
+      contextRef.location.y = e.clientY
+      contextRef.show = true
+    })
+  },
+  onClickoutside: () => {
+    contextRef.show = false
+  },
+  onselect: (key: string | number) => {
+    contextRef.show = false
+    if (key === 'add-list') {
+      siderMenu.add()
+    }
+    if (key === 'rename-list') {
+      siderMenu.rename()
+    }
+    if (key === 'delete-list') {
+      siderMenu.delete()
+    }
+  }
+}
+
+// list data 数据 key为每一个list的key  value为list的数据
+const lists = reactive<list[]>([
+  {
+    id: 'task - ' + sha1(Date.now() + '-' + random(1000, 9999).toString() + '-' + random(1000, 9999).toString()),
+    key: siderSelected.key,
+    value: 'test',
+    originImportant: siderSelected.key === 'important',
+    originMyDay: siderSelected.key === 'day',
+    originPlan: siderSelected.key === 'plan',
+    creatTime: Date.now(),
+  }
+])
+const listData = computed(() => {
+  if (siderSelected.key === 'day') {
+    return lists.filter(item => item.isMyDay || item.originMyDay)
+  } else if (siderSelected.key === 'important') {
+    return lists.filter(item => item.isImportant || item.originImportant)
+  } else if (siderSelected.key === 'plan') {
+    return lists.filter(item => item.isPlan || item.originPlan)
+  } else if (siderSelected.key === 'task') {
+    //这里要返回 day important plan 以内的所有任务
+    return lists.filter(item => item.isMyDay || item.isImportant || item.isPlan || item.originMyDay || item.originImportant || item.originPlan)
+  } else {
+    return lists.filter(item => item.key === siderSelected.key)
+  }
+})
+// 返回listdata中已经完成的任务
+const listFinished = computed(() => {
+  return listData.value.filter(item => item.isFinished)
+})
+
+const newTaskValue = ref('')
+// 添加新的任务
+const createNewList = () => {
+  if (!newTaskValue.value) {
+    return
+  }
+  lists.push({
+    id: 'task - ' + sha1(Date.now() + '-' + random(1000, 9999).toString() + '-' + random(1000, 9999).toString()),
+    key: siderSelected.key,
+    value: newTaskValue.value,
+    isImportant: siderSelected.key === 'important',
+    isMyDay: siderSelected.key === 'day',
+    isPlan: siderSelected.key === 'plan',
+    creatTime: Date.now(),
+  })
+  newTaskValue.value = ''
+}
+
+// 任务的右边抽屉的相关逻辑
+const contentDrawer = reactive(
+  {
+    show: false,
+    content: {} as list,
+  }
+)
+// 修改任务
+const taskEdit = (id: string) => {
+  const task = lists.find(item => item.id === id)
+  if (task) {
+    // 将task中的steps的isFinished没有的属性设置为false
+    if (task.steps) {
+      task.steps = task.steps.map(item => {
+        return {
+          key: item.key,
+          value: item.value,
+          isFinished: item.isFinished || false,
+        }
+      })
+    } else {
+      task.steps = []
+    }
+    contentDrawer.content = task
+    contentDrawer.show = true
+  }
+}
+// 默认步骤
+const creatStep = () => {
+  return {
+    key: 'step - ' + sha1(Date.now() + '-' + random(1000, 9999).toString() + '-' + random(1000, 9999).toString()),
+    value: '新建步骤',
+    isFinished: false,
+  }
+}
+// 添加步骤
+const addSteps = (value: step[]) => {
+  contentDrawer.content.steps = value.map(item => {
+    return {
+      key: 'step - ' + sha1(Date.now() + '-' + random(1000, 9999).toString() + '-' + random(1000, 9999).toString()),
+      value: item.value,
+      isFinished: item.isFinished,
+    }
+  })
+}
+
+// 修改任务标题
+const editTaskTitle = ref(false)
+const editTaskTitleRef = ref<InputInst>()
+const editTaskTitleValue = ref('')
+const editTaskTitleShow = () => {
+  editTaskTitleValue.value = contentDrawer.content.value
+  editTaskTitle.value = true
+  nextTick(() => {
+    editTaskTitleRef.value?.focus()
+  })
+}
+const editTaskTitleHide = () => {
+  // 如果是空的话就不修改
+  if (editTaskTitleValue.value.trim() === '') {
+    editTaskTitleValue.value = contentDrawer.content.value
+    nextTick(() => {
+      editTaskTitleRef.value?.blur()
+    })
+    return
+  }
+  contentDrawer.content.value = editTaskTitleValue.value
+  editTaskTitle.value = false
+}
+
+// 根据指定的id删除任务
+const deleteTask = (id: string) => {
+  const index = lists.findIndex(item => item.id === id)
+  if (index !== -1) {
+    lists.splice(index, 1)
+  }
+  contentDrawer.show = false
 }
 
 </script>
@@ -210,6 +457,22 @@ const titleEdit = () => {
   align-items: center;
   justify-content: space-between;
   padding: 0 24px;
+  margin-bottom: 16px;
+}
+
+.text-bottom-center {
+  position: absolute;
+  width: 100%;
+  bottom: 0;
+  height: 32px;
+  margin-bottom: 16px;
+  left: 0;
+  text-align: center;
+}
+
+.top-bar {
+  display: flex;
+  justify-content: space-between;
 }
 </style>
 
@@ -274,16 +537,17 @@ const titleEdit = () => {
       </div>
     </n-layout-header>
     <n-layout position="absolute" style="top: 64px;" has-sider>
-      <n-layout-sider bordered show-trigger collapse-mode="width" :collapsed-width="64" :width="240"
-        :native-scrollbar="false" :collapsed="!sider.value" @update:collapsed="sider.update">
+      <n-layout-sider bordered show-trigger collapse-mode="width" :collapsed-width="config.isMobile ? 0 : 64"
+        :width="240" :native-scrollbar="false" :collapsed="!sider.value" @update:collapsed="sider.update"
+        @contextmenu.prevent="contextMenuHandler.handleContextMenu">
         <n-input v-model:value="siderSearch.value" placeholder="搜索" bordered
           :style="{ width: '90%', margin: '16px 5%' }" path="search" v-if="sider.value">
           <template #prefix>
             <n-icon :component="SearchIcon" />
           </template>
         </n-input>
-        <n-menu :collapsed-width="64" :collapsed-icon-size="22" :options="siderMenu.menu" :value="siderMenu.value"
-          @update:value="siderMenu.update" style="margin-bottom: 64px;" />
+        <n-menu :collapsed-width="config.isMobile ? 0 : 64" :collapsed-icon-size="22" :options="siderMenu.menu"
+          :value="siderMenu.value" @update:value="siderMenu.update" style="margin-bottom: 64px;" />
         <div class="sider-bottom-center">
           <n-button quaternary block @click="siderMenu.add">
             <template #icon>
@@ -294,8 +558,78 @@ const titleEdit = () => {
             <span v-if="sider.value">新建列表</span>
           </n-button>
         </div>
+        <contextMenu :options="contextRef.options" :show="contextRef.show"
+          :on-clickoutside="contextMenuHandler.onClickoutside" :location="contextRef.location"
+          :on-select="contextMenuHandler.onselect" />
       </n-layout-sider>
       <n-layout content-style="padding: 24px;" :native-scrollbar="false">
+        <n-drawer v-model:show="contentDrawer.show" :width="!config.isMobile ? 360 : box.width" placement="right">
+          <n-drawer-content>
+            <div class="top-bar">
+              <n-h3 v-if="!editTaskTitle" @click="editTaskTitleShow" style="text-align: center"
+                v-html="safeHtml(contentDrawer.content.value)"></n-h3>
+              <n-input v-else ref="editTaskTitleRef" v-model:value="editTaskTitleValue"
+                :placeholder="editTaskTitleValue" bordered :style="{ width: '90%', margin: '16px 5%' }"
+                @change="editTaskTitleHide" @blur="editTaskTitleHide" />
+              <div>
+                <n-button size="small" type="primary"
+                  @click="contentDrawer.content.isFinished = !contentDrawer.content.isFinished">
+                  <template #icon>
+                    <n-icon>
+                      <CheckmarkIcon />
+                    </n-icon>
+                  </template>
+                  标记为{{ contentDrawer.content.isFinished ? '未完成' : '已完成' }}
+                </n-button>
+                <n-button type="tertiary" @click="contentDrawer.show = false"
+                  style="width: 32px; height: 32px; margin-left: 5px;">
+                  <template #icon>
+                    <n-icon>
+                      <CloseIcon />
+                    </n-icon>
+                  </template>
+                </n-button>
+              </div>
+            </div>
+            <n-space vertical>
+              <n-list>
+                <n-list-item>
+                  <n-thing title="添加步骤" title-extra="慢慢来">
+                    <n-dynamic-input :value="contentDrawer.content.steps" @update:value="addSteps" @create="creatStep">
+                      <template #create-button-default>
+                        添加步骤
+                      </template>
+                      <template #default="{ value }">
+                        <div style="display: flex; align-items: center; width: 100%">
+                          <n-radio v-model:checked="value.isFinished" style="margin-right: 12px"
+                            @click.stop="value.isFinished = !value.isFinished" />
+                          <n-input v-model:value="value.value" type="text" />
+                        </div>
+                      </template>
+                    </n-dynamic-input>
+                  </n-thing>
+                </n-list-item>
+                <n-list-item>
+                  <n-thing title="添加到我的一天" title-extra="有些事情需要更自律一点">
+                    <n-button dashed block
+                      :type="contentDrawer.content.isMyDay || contentDrawer.content.originMyDay ? 'error' : 'default'"
+                      @click="contentDrawer.content.originMyDay ? deleteTask(contentDrawer.content.id) : (contentDrawer.content.isMyDay = !contentDrawer.content.isMyDay)">
+                      <template #icon>
+                        <n-icon>
+                          <SunnyIcon />
+                        </n-icon>
+                      </template>
+                      {{ contentDrawer.content.isMyDay || contentDrawer.content.originMyDay ? '从我的一天中移除' : '添加到我的一天' }}
+                    </n-button>
+                  </n-thing>
+                </n-list-item>
+              </n-list>
+            </n-space>
+            <div class="text-bottom-center">
+              创建于{{ dateDescription(contentDrawer.content.creatTime as number) }}
+            </div>
+          </n-drawer-content>
+        </n-drawer>
         <div class="plan-bar">
           <h2 v-if="!titleInput" @click="titleEdit">{{ siderSelected.label }}</h2>
           <n-input v-else ref="titleInputRef" :placeholder="siderSelected.label" v-model:value="titleInputValue"
@@ -305,13 +639,45 @@ const titleEdit = () => {
             </template>
           </n-input>
         </div>
-        <n-layout-footer bordered position="absolute"
+        <n-space vertical>
+          <!-- v-for和v-if不能同时在一个元素，创建一个div -->
+          <div v-for="list in listData">
+            <n-card v-if="!list.isFinished" @click="taskEdit(list.id)">
+              <n-radio :checked="list.isFinished" :value="list.id" :name="list.value"
+                @click.stop="list.isFinished = !list.isFinished">
+              </n-radio>
+              &nbsp;
+              <span style="font-size: 16px;" v-html="safeHtml(list.value)"></span>
+            </n-card>
+          </div>
+        </n-space>
+        <n-tag v-if="listFinished.length >= 1" round :bordered="false" type="success" style="margin: 16px 0;">
+          已完成
+          <template #icon>
+            <n-icon :component="CheckmarkCircleIcon" />
+          </template>
+        </n-tag>
+        <n-space vertical>
+          <n-card v-for="list in listFinished" @click="taskEdit(list.id)">
+            <n-radio :checked="list.isFinished" :value="list.id" :name="list.value"
+              @click.stop="list.isFinished = !list.isFinished">
+            </n-radio>
+            &nbsp;
+            <span style="font-size: 16px;" v-html="safeHtml(list.value)"></span>
+          </n-card>
+        </n-space>
+        <n-layout-footer bordered position="absolute" v-if="!sider.value || !config.isMobile"
           style="height: 64px; display: flex; align-items: center; padding: 6px 36px;">
-          <n-input placeholder="添加任务">
-            <template #prefix>
+          <n-input-group>
+            <n-input placeholder="添加任务" v-model:value="newTaskValue" @blur="createNewList" @change="createNewList">
+              <template #prefix>
+                <n-icon :component="AddIcon" />
+              </template>
+            </n-input>
+            <n-button strong secondary @click="createNewList">
               <n-icon :component="AddIcon" />
-            </template>
-          </n-input>
+            </n-button>
+          </n-input-group>
         </n-layout-footer>
       </n-layout>
     </n-layout>
