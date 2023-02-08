@@ -62,7 +62,7 @@ const themeHandler = (theme: string) => {
       break
   }
 }
-const { locale, theme } = storeToRefs(config)
+const { locale, theme, isMobile } = storeToRefs(config)
 localeHandler(locale.value)
 themeHandler(theme.value)
 
@@ -77,6 +77,17 @@ onMounted(() => {
       theme.value = e.data
     }
   }
+
+  // 监听窗口大小变化
+  const handleResize = () => {
+    if (window.innerWidth < 768) {
+      isMobile.value = true
+    } else {
+      isMobile.value = false
+    }
+  }
+  window.addEventListener('resize', handleResize)
+  handleResize()
 })
 
 </script>
