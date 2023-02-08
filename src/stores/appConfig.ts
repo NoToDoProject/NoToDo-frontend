@@ -6,11 +6,13 @@ export const appConfig = defineStore('appConfig', {
     locale: 'zhCN',
     theme: 'auto',
     sider: true,
+    isMobile: false,
   }),
   getters: {
     getLocale: (state) => state.locale,
     getTheme: (state) => state.theme,
     getSider: (state) => state.sider,
+    getIsMobile: (state) => state.isMobile,
   },
   actions: {
     setLocale(locale: string) {
@@ -21,6 +23,9 @@ export const appConfig = defineStore('appConfig', {
     },
     setSider(sider: boolean) {
       this.sider = sider
+    },
+    setIsMobile(isMobile: boolean) {
+      this.isMobile = isMobile
     }
   },
   persist: true,
