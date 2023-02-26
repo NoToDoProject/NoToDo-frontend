@@ -11,6 +11,8 @@ import type {
 } from 'naive-ui'
 import { appConfig } from '@/stores/appConfig'
 import { storeToRefs } from 'pinia'
+// 测试loadingButton
+import loadButton from '@/components/loadButton.vue'
 import {
   SettingsOutline as SettingsIcon,
   SunnyOutline as SunnyIcon,
@@ -29,6 +31,7 @@ import {
   CreateOutline as CreateIcon,
   CheckmarkCircleOutline as CheckmarkCircleIcon,
   CloseOutline as CloseIcon,
+  NotificationsOutline as NotificationsIcon,
 } from '@vicons/ionicons5'
 import contextMenu from '@/components/contextMenu.vue'
 // 引入工具函数
@@ -36,6 +39,11 @@ import { random } from '@/tools/math'
 import { safeHtml, dateDescription } from '@/tools/string'
 // 哈希散列列表的key
 import sha1 from 'sha1'
+
+const worker = {
+  notify: null as Worker | null,
+}
+
 // 渲染图标
 const renderIcon = (icon: Component) => {
   return () => h(NIcon, null, { default: () => h(icon) })
@@ -56,28 +64,41 @@ onMounted(() => {
     box.width = window.innerWidth
     box.height = window.innerHeight
   })
+
+  // 创建worker
+  // 提醒的worker
+  worker.notify = new Worker(new URL('../workers/notify.ts', import.meta.url), { type: "module" })
+  // 获取notification不为undefined的列表
+  const notifyList = listData.value.filter(item => item.notification !== undefined)
+  // 如果接受到notified消息，则将该消息的notification设置为undefined
+  worker.notify.onmessage = (e) => {
+    if (e.data.type === 'notified') {
+      const index = listData.value.findIndex(item => item.id === e.data.data.id)
+      if (index !== -1) {
+        listData.value[index].notification = undefined
+      }
+    }
+  }
+  // 发送初始化消息
+  worker.notify.postMessage({
+    type: 'init',
+    data: notifyList,
+  })
 })
 
 // sider的相关逻辑
-const sider = reactive({
-  value: storeToRefs(config).sider,
-  update: (value: boolean) => {
-    sider.value = !value
-  }
-})
+const { collapsed } = storeToRefs(config)
 
 // sider内部组件的相关逻辑
-const siderSearch = reactive({
-  value: '',
-})
+const siderSearchValue = ref('')
 const siderSelected = reactive<{ label: string, key: string }>(
   {
     label: '我的一天',
     key: 'day',
   }
 )
+const siderMenuValue = ref('day')
 const siderMenu = reactive({
-  value: 'day',
   menu: [
     {
       label: '我的一天',
@@ -105,7 +126,7 @@ const siderMenu = reactive({
     }
   ] as Array<{ label: string, key: string, icon: any, children?: any }>,
   update: (key: string) => {
-    siderMenu.value = key
+    siderMenuValue.value = key
     const select = siderMenu.menu.find(item => item.key === key) as { label: string, key: string }
     siderSelected.label = select.label
     siderSelected.key = select.key
@@ -419,6 +440,104 @@ const deleteTask = (id: string) => {
   contentDrawer.show = false
 }
 
+// 提醒我相关逻辑
+const notifyMe = reactive({
+  options: [
+    {
+      label: '今天晚些时候(18:00)',
+      key: 'today-later',
+      disabled: new Date().getHours() >= 18
+    },
+    {
+      label: '明天早些时候(9:00)',
+      key: 'tomorrow-earlier',
+      disabled: false
+    },
+    {
+      label: '明天晚些时候(18:00)',
+      key: 'tomorrow-later',
+      disabled: false
+    },
+    {
+      label: '下周早些时候(9:00)',
+      key: 'next-week-earlier',
+      disabled: false
+    },
+    {
+      label: '下周晚些时候(18:00)',
+      key: 'next-week-later',
+      disabled: false
+    },
+    {
+      label: '自定义',
+      key: 'custom',
+    },
+    {
+      label: '取消提醒',
+      key: 'none',
+      disabled: contentDrawer.content.notification === undefined
+    }
+  ],
+  handleSelect(key: string | number) {
+    const date = new Date()
+    date.setMilliseconds(0)
+    if (key !== 'none') {
+      notifyMe.options[6].disabled = false
+    }
+    if (key === 'today-later') {
+      date.setHours(18)
+      date.setMinutes(0)
+      date.setSeconds(0)
+    } else if (key === 'tomorrow-earlier') {
+      date.setDate(date.getDate() + 1)
+      date.setHours(9)
+      date.setMinutes(0)
+      date.setSeconds(0)
+    } else if (key === 'tomorrow-later') {
+      date.setDate(date.getDate() + 1)
+      date.setHours(18)
+      date.setMinutes(0)
+      date.setSeconds(0)
+    } else if (key === 'next-week-earlier') {
+      date.setDate(date.getDate() + 7)
+      date.setHours(9)
+      date.setMinutes(0)
+      date.setSeconds(0)
+    } else if (key === 'next-week-later') {
+      date.setDate(date.getDate() + 7)
+      date.setHours(18)
+      date.setMinutes(0)
+      date.setSeconds(0)
+    } else if (key === 'none') {
+      contentDrawer.content.notification = undefined
+      notifyMe.options[6].disabled = true
+    } else {
+      notifyMe.custom.show = true
+    }
+    if (key !== 'none' && key !== 'custom') {
+      contentDrawer.content.notification = date.getTime()
+      worker.notify!.postMessage({
+        type: 'add',
+        // 数据不能clone，否则会报错，采用JSON.parse(JSON.stringify())的方式
+        data: JSON.parse(JSON.stringify(contentDrawer.content))
+      })
+    }
+  },
+  custom: {
+    show: false,
+    value: new Date().getTime(),
+    handleSelect(value: number) {
+      contentDrawer.content.notification = value
+      notifyMe.custom.show = false
+      worker.notify!.postMessage({
+        type: 'add',
+        // 数据不能clone，否则会报错，采用JSON.parse(JSON.stringify())的方式
+        data: JSON.parse(JSON.stringify(contentDrawer.content))
+      })
+    }
+  }
+})
+
 </script>
 
 <style scoped>
@@ -537,25 +656,25 @@ const deleteTask = (id: string) => {
       </div>
     </n-layout-header>
     <n-layout position="absolute" style="top: 64px;" has-sider>
-      <n-layout-sider bordered show-trigger collapse-mode="width" :collapsed-width="config.isMobile ? 0 : 64"
-        :width="240" :native-scrollbar="false" :collapsed="!sider.value" @update:collapsed="sider.update"
+      <n-layout-sider bordered show-trigger collapse-mode="width" :collapsed-width="config.isMobile ? 0 : 64" :width="240"
+        :native-scrollbar="false" v-model:collapsed="collapsed"
         @contextmenu.prevent="contextMenuHandler.handleContextMenu">
-        <n-input v-model:value="siderSearch.value" placeholder="搜索" bordered
-          :style="{ width: '90%', margin: '16px 5%' }" path="search" v-if="sider.value">
+        <n-input v-model:value="siderSearchValue" placeholder="搜索" bordered :style="{ width: '90%', margin: '16px 5%' }"
+          path="search" v-if="!collapsed">
           <template #prefix>
             <n-icon :component="SearchIcon" />
           </template>
         </n-input>
         <n-menu :collapsed-width="config.isMobile ? 0 : 64" :collapsed-icon-size="22" :options="siderMenu.menu"
-          :value="siderMenu.value" @update:value="siderMenu.update" style="margin-bottom: 64px;" />
+          :value="siderMenuValue" @update:value="siderMenu.update" style="margin-bottom: 64px;" />
         <div class="sider-bottom-center">
           <n-button quaternary block @click="siderMenu.add">
             <template #icon>
-              <n-icon :size="sider.value ? 20 : 22">
+              <n-icon :size="!collapsed ? 20 : 22">
                 <AddIcon />
               </n-icon>
             </template>
-            <span v-if="sider.value">新建列表</span>
+            <span v-if="!collapsed">新建列表</span>
           </n-button>
         </div>
         <contextMenu :options="contextRef.options" :show="contextRef.show"
@@ -563,23 +682,23 @@ const deleteTask = (id: string) => {
           :on-select="contextMenuHandler.onselect" />
       </n-layout-sider>
       <n-layout content-style="padding: 24px;" :native-scrollbar="false">
-        <n-drawer v-model:show="contentDrawer.show" :width="!config.isMobile ? 360 : box.width" placement="right">
+        <n-drawer v-model:show="contentDrawer.show" :width="!config.isMobile ? 420 : box.width" placement="right">
           <n-drawer-content>
             <div class="top-bar">
               <n-h3 v-if="!editTaskTitle" @click="editTaskTitleShow" style="text-align: center"
                 v-html="safeHtml(contentDrawer.content.value)"></n-h3>
-              <n-input v-else ref="editTaskTitleRef" v-model:value="editTaskTitleValue"
-                :placeholder="editTaskTitleValue" bordered :style="{ width: '90%', margin: '16px 5%' }"
-                @change="editTaskTitleHide" @blur="editTaskTitleHide" />
+              <n-input v-else ref="editTaskTitleRef" v-model:value="editTaskTitleValue" :placeholder="editTaskTitleValue"
+                bordered :style="{ width: '90%', margin: '16px 5%' }" @change="editTaskTitleHide"
+                @blur="editTaskTitleHide" />
               <div>
-                <n-button size="small" type="primary"
+                <n-button text size="small" style="margin-right: 5px;"
                   @click="contentDrawer.content.isFinished = !contentDrawer.content.isFinished">
                   <template #icon>
                     <n-icon>
                       <CheckmarkIcon />
                     </n-icon>
                   </template>
-                  标记为{{ contentDrawer.content.isFinished ? '未完成' : '已完成' }}
+                  {{ contentDrawer.content.isFinished ? '已完成' : '未完成' }}
                 </n-button>
                 <n-button type="tertiary" @click="contentDrawer.show = false"
                   style="width: 32px; height: 32px; margin-left: 5px;">
@@ -594,34 +713,52 @@ const deleteTask = (id: string) => {
             <n-space vertical>
               <n-list>
                 <n-list-item>
-                  <n-thing title="添加步骤" title-extra="慢慢来">
-                    <n-dynamic-input :value="contentDrawer.content.steps" @update:value="addSteps" @create="creatStep">
-                      <template #create-button-default>
-                        添加步骤
-                      </template>
-                      <template #default="{ value }">
-                        <div style="display: flex; align-items: center; width: 100%">
-                          <n-radio v-model:checked="value.isFinished" style="margin-right: 12px"
-                            @click.stop="value.isFinished = !value.isFinished" />
-                          <n-input v-model:value="value.value" type="text" />
-                        </div>
-                      </template>
-                    </n-dynamic-input>
-                  </n-thing>
+                  <n-dynamic-input :value="contentDrawer.content.steps" @update:value="addSteps" @create="creatStep">
+                    <template #create-button-default>
+                      添加步骤
+                    </template>
+                    <template #default="{ value }">
+                      <div style="display: flex; align-items: center; width: 100%">
+                        <n-radio v-model:checked="value.isFinished" style="margin-right: 12px"
+                          @click.stop="value.isFinished = !value.isFinished" />
+                        <n-input v-model:value="value.value" type="text" />
+                      </div>
+                    </template>
+                  </n-dynamic-input>
                 </n-list-item>
                 <n-list-item>
-                  <n-thing title="添加到我的一天" title-extra="有些事情需要更自律一点">
-                    <n-button dashed block
-                      :type="contentDrawer.content.isMyDay || contentDrawer.content.originMyDay ? 'error' : 'default'"
-                      @click="contentDrawer.content.originMyDay ? deleteTask(contentDrawer.content.id) : (contentDrawer.content.isMyDay = !contentDrawer.content.isMyDay)">
+                  <n-button text block
+                    :type="contentDrawer.content.isMyDay || contentDrawer.content.originMyDay ? 'error' : 'default'"
+                    @click="contentDrawer.content.originMyDay ? deleteTask(contentDrawer.content.id) : (contentDrawer.content.isMyDay = !contentDrawer.content.isMyDay)">
+                    <template #icon>
+                      <n-icon>
+                        <SunnyIcon />
+                      </n-icon>
+                    </template>
+                    {{ contentDrawer.content.isMyDay || contentDrawer.content.originMyDay ? '从我的一天中移除' : '添加到我的一天' }}
+                  </n-button>
+                </n-list-item>
+                <n-list-item>
+                  <n-dropdown trigger="hover" :options="notifyMe.options" @select="notifyMe.handleSelect">
+                    <n-button text block>
                       <template #icon>
                         <n-icon>
-                          <SunnyIcon />
+                          <NotificationIcon />
                         </n-icon>
                       </template>
-                      {{ contentDrawer.content.isMyDay || contentDrawer.content.originMyDay ? '从我的一天中移除' : '添加到我的一天' }}
+                      {{
+                        contentDrawer.content.notification ? '已于' + new
+                          Date(contentDrawer.content.notification).toLocaleString() + "设置提醒" : '提醒我'
+                      }}
                     </n-button>
-                  </n-thing>
+                  </n-dropdown>
+                  <n-modal v-model:show="notifyMe.custom.show" transform-origin="center">
+                    <n-card style="width: 400px;" title="自定义时间" :bordered="false" size="huge" role="dialog"
+                      aria-modal="true">
+                      <n-date-picker panel v-model:value="notifyMe.custom.value" type="datetime"
+                        @confirm="notifyMe.custom.handleSelect" />
+                    </n-card>
+                  </n-modal>
                 </n-list-item>
               </n-list>
             </n-space>
@@ -630,43 +767,80 @@ const deleteTask = (id: string) => {
             </div>
           </n-drawer-content>
         </n-drawer>
-        <div class="plan-bar">
-          <h2 v-if="!titleInput" @click="titleEdit">{{ siderSelected.label }}</h2>
-          <n-input v-else ref="titleInputRef" :placeholder="siderSelected.label" v-model:value="titleInputValue"
-            @change="titleEdited" @blur="titleEdited">
-            <template #prefix>
-              <n-icon :component="PencilIcon" />
+        <loadButton text="213123" />
+        <!-- 如果搜索框有内容，则不显示 -->
+        <div v-if="siderSearchValue.length <= 0">
+          <div class="plan-bar">
+            <h2 v-if="!titleInput" @click="titleEdit">{{ siderSelected.label }}</h2>
+            <n-input v-else ref="titleInputRef" :placeholder="siderSelected.label" v-model:value="titleInputValue"
+              @change="titleEdited" @blur="titleEdited">
+              <template #prefix>
+                <n-icon :component="PencilIcon" />
+              </template>
+            </n-input>
+          </div>
+          <n-space vertical>
+            <!-- v-for和v-if不能同时在一个元素，创建一个div -->
+            <div v-for="list in listData">
+              <n-card v-if="!list.isFinished" @click="taskEdit(list.id)">
+                <n-radio :checked="list.isFinished" :value="list.id" :name="list.value"
+                  @click.stop="list.isFinished = !list.isFinished">
+                </n-radio>
+                &nbsp;
+                <span style="font-size: 16px;" v-html="safeHtml(list.value)"></span>
+              </n-card>
+            </div>
+          </n-space>
+          <n-tag v-if="listFinished.length >= 1" round :bordered="false" type="success" style="margin: 16px 0;">
+            已完成
+            <template #icon>
+              <n-icon :component="CheckmarkCircleIcon" />
             </template>
-          </n-input>
-        </div>
-        <n-space vertical>
-          <!-- v-for和v-if不能同时在一个元素，创建一个div -->
-          <div v-for="list in listData">
-            <n-card v-if="!list.isFinished" @click="taskEdit(list.id)">
+          </n-tag>
+          <n-space vertical>
+            <n-card v-for="list in listFinished" @click="taskEdit(list.id)">
               <n-radio :checked="list.isFinished" :value="list.id" :name="list.value"
                 @click.stop="list.isFinished = !list.isFinished">
               </n-radio>
               &nbsp;
-              <span style="font-size: 16px;" v-html="safeHtml(list.value)"></span>
+              <span style="font-size: 16px; text-decoration: line-through;" v-html="safeHtml(list.value)"></span>
             </n-card>
+          </n-space>
+        </div>
+        <!-- 搜索结果 -->
+        <div v-else>
+          <div class="plan-bar">
+            <h2>{{ siderSearchValue }}的搜索结果</h2>
           </div>
-        </n-space>
-        <n-tag v-if="listFinished.length >= 1" round :bordered="false" type="success" style="margin: 16px 0;">
-          已完成
-          <template #icon>
-            <n-icon :component="CheckmarkCircleIcon" />
-          </template>
-        </n-tag>
-        <n-space vertical>
-          <n-card v-for="list in listFinished" @click="taskEdit(list.id)">
-            <n-radio :checked="list.isFinished" :value="list.id" :name="list.value"
-              @click.stop="list.isFinished = !list.isFinished">
-            </n-radio>
-            &nbsp;
-            <span style="font-size: 16px;" v-html="safeHtml(list.value)"></span>
-          </n-card>
-        </n-space>
-        <n-layout-footer bordered position="absolute" v-if="!sider.value || !config.isMobile"
+          <n-space vertical>
+            <!-- v-for和v-if不能同时在一个元素，创建一个div -->
+            <div v-for="list in listData.filter((item) => item.value.includes(siderSearchValue))">
+              <n-card v-if="!list.isFinished" @click="taskEdit(list.id)">
+                <n-radio :checked="list.isFinished" :value="list.id" :name="list.value"
+                  @click.stop="list.isFinished = !list.isFinished">
+                </n-radio>
+                &nbsp;
+                <span style="font-size: 16px;" v-html="safeHtml(list.value)"></span>
+              </n-card>
+            </div>
+          </n-space>
+          <n-tag v-if="listFinished.length >= 1" round :bordered="false" type="success" style="margin: 16px 0;">
+            已完成
+            <template #icon>
+              <n-icon :component="CheckmarkCircleIcon" />
+            </template>
+          </n-tag>
+          <n-space vertical>
+            <n-card v-for="list in listFinished" @click="taskEdit(list.id)">
+              <n-radio :checked="list.isFinished" :value="list.id" :name="list.value"
+                @click.stop="list.isFinished = !list.isFinished">
+              </n-radio>
+              &nbsp;
+              <span style="font-size: 16px; text-decoration: line-through;" v-html="safeHtml(list.value)"></span>
+            </n-card>
+          </n-space>
+        </div>
+        <n-layout-footer bordered position="absolute" v-if="collapsed || !config.isMobile"
           style="height: 64px; display: flex; align-items: center; padding: 6px 36px;">
           <n-input-group>
             <n-input placeholder="添加任务" v-model:value="newTaskValue" @blur="createNewList" @change="createNewList">
@@ -675,11 +849,13 @@ const deleteTask = (id: string) => {
               </template>
             </n-input>
             <n-button strong secondary @click="createNewList">
-              <n-icon :component="AddIcon" />
+              <n-icon>
+                <AddIcon />
+              </n-icon>
             </n-button>
           </n-input-group>
         </n-layout-footer>
       </n-layout>
     </n-layout>
-  </n-layout>
+</n-layout>
 </template>

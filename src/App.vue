@@ -5,6 +5,12 @@ import { zhCN, dateZhCN, NConfigProvider, enUS, dateEnUS, lightTheme, darkTheme 
 // 引入系统配置store
 import { appConfig } from '@/stores/appConfig'
 import { storeToRefs } from 'pinia'
+// 引入provider component
+import Xdialog from '@/components/dialog.vue'
+import notification from './components/notification.vue'
+import message from '@/components/message.vue'
+import loadingBar from '@/components/loadingBar.vue'
+
 const config = appConfig()
 
 // 配置的响应式数据
@@ -88,11 +94,33 @@ onMounted(() => {
   }
   window.addEventListener('resize', handleResize)
   handleResize()
+
+  // 尝试请求通知权限
+  Notification.requestPermission(function (status) {
+    if (status === 'granted') {
+      console.log('通知权限已开启')
+    } else {
+      window.$message.error('通知权限已关闭，您的功能将受到限制')
+      console.log('通知权限已关闭，您的功能将受到限制')
+    }
+  })
 })
 
 </script>
 
 <template>
+  <n-message-provider>
+    <message />
+  </n-message-provider>
+  <n-notification-provider>
+    <notification />
+  </n-notification-provider>
+  <n-dialog-provider>
+    <Xdialog />
+  </n-dialog-provider>
+  <n-loading-bar-provider>
+    <loadingBar />
+  </n-loading-bar-provider>
   <n-config-provider :locale="settings.locale" :date-locale="settings.dateLocale" :theme-overrides="themeOverrides"
     :theme="settings.theme" inline-theme-disabled>
     <RouterView />

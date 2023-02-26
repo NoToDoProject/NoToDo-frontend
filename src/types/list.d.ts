@@ -15,6 +15,7 @@ type list = {
     key: string,
     value: string,
     steps?: step[],
+    notification?: number,
     repeat?: number | string | repeat,
     isFinished?: boolean,
     description?: string,

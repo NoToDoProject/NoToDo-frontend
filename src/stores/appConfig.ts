@@ -5,13 +5,13 @@ export const appConfig = defineStore('appConfig', {
   state: () => ({
     locale: 'zhCN',
     theme: 'auto',
-    sider: true,
+    collapsed: true,
     isMobile: false,
   }),
   getters: {
     getLocale: (state) => state.locale,
     getTheme: (state) => state.theme,
-    getSider: (state) => state.sider,
+    getcollapsed: (state) => state.collapsed,
     getIsMobile: (state) => state.isMobile,
   },
   actions: {
@@ -21,8 +21,8 @@ export const appConfig = defineStore('appConfig', {
     setTheme(theme: string) {
       this.theme = theme
     },
-    setSider(sider: boolean) {
-      this.sider = sider
+    setcollapsed(collapsed: boolean) {
+      this.collapsed = collapsed
     },
     setIsMobile(isMobile: boolean) {
       this.isMobile = isMobile
